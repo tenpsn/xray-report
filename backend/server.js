@@ -24,6 +24,13 @@ const dbConfig = {
 
 const pool = new Pool(dbConfig);
 
+process.on('uncaughtException', (err) => {
+  console.error('[Server] ---> Uncaught Exception (ไม่ล่มแต่ต้องรีบดูสาเหตุ):', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] ---> Unhandled Rejection (ไม่ล่มแต่ต้องรีบดูสาเหตุ):', reason);
+});
+
 // เพิ่ม parameter รับอาร์เรย์แต่ละสถานะเข้ามา
 function buildXrayReportQuery(dateback, include, exclude, confirm, existingXNs = [], xns_NN = [], xns_YN = [], xns_NY = []) {
   const params = [];
@@ -109,7 +116,13 @@ app.get('/health', (req, res) => {
   res.json({ ok: true });
 });
 
+let isProcessingXrayReport = false;
+
 app.post('/api/xray-report', async (req, res) => {
+  if (isProcessingXrayReport) {
+    return res.status(429).json({ success: false, message: ' ---> กำลังประมวลผลรอบก่อนหน้าอยู่ กรุณาลองใหม่อีกครั้ง' });
+  }
+  isProcessingXrayReport = true;
   try {
     // ดึงตัวแปรใหม่ที่ส่งมาจาก Frontend มารับใน req.body
     const { dateback = 1, include, exclude, confirm, existingXNs, xns_NN, xns_YN, xns_NY } = req.body;
@@ -140,6 +153,7 @@ app.post('/api/xray-report', async (req, res) => {
   } catch (err) {
     console.error('Query error:', err);
     res.status(500).json({ success: false, message: 'เกิดข้อผิดพลาดในการดึงข้อมูล', error: err.message });
+    isProcessingXrayReport = false;
   }
 });
 
