@@ -19,42 +19,53 @@ export default function Page() {
   const intervalRef = useRef(null);
   const isFirstLangRender = useRef(true);
 
+  const isLoadingRef = useRef(false);
+
   async function loadData(isManual = false) {
-    if (isManual) {
-      setRows([]);
-      loadedXNsMap.current.clear();
-      setStatus('กำลังโหลดข้อมูล...');
+    if (isLoadingRef.current) {
+      // กันไม่ให้ยิง request ซ้อน
+      if (isManual) {
+        setStatus('กำลังประมวลผลรอบก่อนหน้าอยู่ กรุณารอสักครู่แล้วลองใหม่...');
+      }
+      return;
     }
-
-    // จัดกลุ่ม XN ตามสถานะปัจจุบันที่หน้าบ้านมีอยู่
-    const existingXNs = [];
-    const xns_NN = [];
-    const xns_YN = [];
-    const xns_NY = [];
-
-    loadedXNsMap.current.forEach((statusObj, xn) => {
-      existingXNs.push(xn);
-      const c = statusObj.confirm;
-      const crf = statusObj.confirm_read_film;
-
-      if (c === 'N' && crf === 'N') xns_NN.push(xn);
-      else if (c === 'Y' && crf === 'N') xns_YN.push(xn);
-      else if (c === 'N' && crf === 'Y') xns_NY.push(xn);
-    });
-
-    const requestBody = {
-      dateback: dateback || 1,
-      include,
-      exclude,
-      confirm,
-      lang,
-      existingXNs,
-      xns_NN,
-      xns_YN,
-      xns_NY
-    };
+    isLoadingRef.current = true;
 
     try {
+      if (isManual) {
+        setRows([]);
+        loadedXNsMap.current.clear();
+        setStatus('กำลังโหลดข้อมูล...');
+      }
+
+      // จัดกลุ่ม XN
+      const existingXNs = [];
+      const xns_NN = [];
+      const xns_YN = [];
+      const xns_NY = [];
+
+      loadedXNsMap.current.forEach((statusObj, xn) => {
+        existingXNs.push(xn);
+        const c = statusObj.confirm;
+        const crf = statusObj.confirm_read_film;
+
+        if (c === 'N' && crf === 'N') xns_NN.push(xn);
+        else if (c === 'Y' && crf === 'N') xns_YN.push(xn);
+        else if (c === 'N' && crf === 'Y') xns_NY.push(xn);
+      });
+
+      const requestBody = {
+        dateback: dateback || 1,
+        include,
+        exclude,
+        confirm,
+        lang,
+        existingXNs,
+        xns_NN,
+        xns_YN,
+        xns_NY
+      };
+
       const res = await fetch(`${API_URL}/api/xray-report`, {
         method: 'POST',
         headers: {
@@ -120,6 +131,8 @@ export default function Page() {
       );
     } catch (err) {
       setStatus('เชื่อมต่อ server ไม่ได้: ' + err.message);
+    } finally {
+      isLoadingRef.current = false;
     }
   }
 

@@ -178,6 +178,43 @@ app.post('/api/settings', async (req, res) => {
 
 let isProcessingXrayReport = false;
 
+let isGeneratingWorklists = false;
+
+// จำนวนไฟล์ worklist ที่ยอมให้สร้าง/แปลง พร้อมกัน ปรับตัวเลขนี้ได้ตามสเปคเครื่อง เพิ่มเป็น 10-15 ก็ได้เพื่อให้เร็วขึ้น
+const WORKLIST_CONCURRENCY = 5;
+
+async function processWorklistFiles(records, displayLang) {
+  if (isGeneratingWorklists) {
+    console.warn('[Worklist] ---> รอบก่อนหน้ายังสร้างไฟล์ไม่เสร็จ ข้ามรอบนี้ไปก่อน (รอบถัดไปจะจับข้อมูลที่เปลี่ยนแปลงเองอยู่แล้ว)');
+    return;
+  }
+  isGeneratingWorklists = true;
+
+  try {
+    for (let i = 0; i < records.length; i += WORKLIST_CONCURRENCY) {
+      const batch = records.slice(i, i + WORKLIST_CONCURRENCY);
+      await Promise.all(batch.map(async (record) => {
+        try {
+
+          record.lang = displayLang;
+
+          // ถ้าสถานะเป็น Y, Y ให้ลบไฟล์ทิ้ง
+          if (record.confirm === 'Y' && record.confirm_read_film === 'Y') {
+            dicomService.deleteWorklistFile(record.xn);
+          } else {
+            // ถ้ายังไม่เป็น Y, Y ถึงจะสร้างไฟล์
+            await dicomService.generateWorklistFile(record);
+          }
+        } catch (err) {
+          console.error(`[DICOM Error] ---> ผิดพลาดในการสร้างไฟล์ XN: ${record.xn}`, err);
+        }
+      }));
+    }
+  } finally {
+    isGeneratingWorklists = false;
+  }
+}
+
 app.post('/api/xray-report', async (req, res) => {
   if (isProcessingXrayReport) {
     return res.status(429).json({ success: false, message: ' ---> กำลังประมวลผลรอบก่อนหน้าอยู่ กรุณาลองใหม่อีกครั้ง' });
@@ -197,27 +234,19 @@ app.post('/api/xray-report', async (req, res) => {
     );
 
     const result = await db.query(sql, params);
-    
     const records = result.rows;
-    if (records.length > 0) {
-      for (const record of records) {
-      try {
-        // แนบภาษาที่หน้าเว็บเลือกไว้ (th/en) ไปกับ record เพื่อให้ dicomService รู้ว่าต้องแปลงชื่อเป็นคาราโอเกะหรือไม่
-        record.lang = displayLang;
 
-        // ถ้าสถานะเป็น Y, Y ให้ลบไฟล์ทิ้ง
-        if (record.confirm === 'Y' && record.confirm_read_film === 'Y') {
-          dicomService.deleteWorklistFile(record.xn);
-        } else {
-          // ถ้ายังไม่เป็น Y, Y ถึงจะสร้างไฟล์
-          await dicomService.generateWorklistFile(record);
-        }
-      } catch (err) {
-          console.error(`[DICOM Error] ---> ผิดพลาดในการสร้างไฟล์ XN: ${record.xn}`, err);
-        }
-      }
-    }
+    records.forEach((record) => {
+      record.lang = displayLang;
+    });
+
     res.json({ success: true, count: result.rowCount, data: records });
+
+    if (records.length > 0) {
+      processWorklistFiles(records, displayLang).catch((err) => {
+        console.error('[Worklist] ---> เกิดข้อผิดพลาดขณะสร้างไฟล์ worklist แบบ background:', err);
+      });
+    }
   } catch (err) {
     console.error('Query error:', err);
     const friendlyMessage = db.friendlyErrorMessage(err);
