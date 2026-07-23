@@ -8,7 +8,7 @@ const path = require('path');
 const dicomService = require('./dicomService');
 const settingsService = require('./settingsService');
 const db = require('./db');
-const mppsService = require('./mppsService');
+const mppsservice = require('./mppsservice');
 
 const app = express();
 const PORT = process.env.PORT;
@@ -66,7 +66,7 @@ function handleMppsStatusChange(accessionNumber, status) {
 // ให้ปิดโปรแกรมไปเลยแทนที่จะปล่อยให้รันต่อในสภาพที่ MPPS ใช้งานไม่ได้โดยไม่รู้ตัว
 // (PM2 ตั้ง autorestart: true ไว้แล้ว จะลองสตาร์ทให้ใหม่เอง)
 try {
-  mppsService.startMppsServer(currentSettings.mwl.mppsPort || 7001, handleMppsStatusChange);
+  mppsservice.startMppsServer(currentSettings.mwl.mppsPort || 7001, handleMppsStatusChange);
 } catch (err) {
   console.error('[Server] ---> เริ่ม MPPS server ไม่สำเร็จตอนสตาร์ท ปิดโปรแกรม:', err.message);
   process.exit(1);
@@ -84,11 +84,11 @@ process.on('unhandledRejection', (reason) => {
   process.exit(1);
 });
 process.on('SIGINT', () => {
-  mppsService.stopMppsServer();
+  mppsservice.stopMppsServer();
   process.exit(0);
 });
 process.on('SIGTERM', () => {
-  mppsService.stopMppsServer();
+  mppsservice.stopMppsServer();
   process.exit(0);
 });
 
@@ -281,7 +281,14 @@ app.post('/api/settings', async (req, res) => {
     const reconciledMwl = reconcileSecrets(mwl, currentSettings.mwl);
 
     currentSettings = settingsService.saveSettings({ his: reconciledHis, mwl: reconciledMwl });
-    await db.initPool(currentSettings);
+
+    let dbConnectError = null;
+    try {
+      await db.initPool(currentSettings);
+    } catch (initErr) {
+      console.error('[Settings] ---> เชื่อมต่อฐานข้อมูลด้วยค่าใหม่ไม่สำเร็จ:', initErr.message);
+      dbConnectError = initErr;
+    }
 
     // สลับไปใช้โฟลเดอร์ worklist ใหม่ตามที่ตั้งค่ามา (ถ้าตั้งไม่สำเร็จ เช่น path ผิด/ไม่มีสิทธิ์ ให้แจ้งเตือนแต่ไม่ทำให้บันทึกค่าอื่นล้มเหลวไปด้วย)
     let worklistDirWarning = '';
@@ -295,30 +302,37 @@ app.post('/api/settings', async (req, res) => {
     // เริ่ม MPPS server ใหม่ด้วย port ล่าสุด — ถ้าเริ่มไม่สำเร็จ (เช่น port ชนกับโปรแกรมอื่น) แค่แจ้งเตือน
     // ไม่ทำให้การบันทึกค่าอื่นๆ (DB, worklist dir) ล้มเหลวไปด้วย และไม่ปิดทั้งเซิร์ฟเวอร์ทิ้ง
     try {
-      mppsService.startMppsServer(currentSettings.mwl.mppsPort || 7001, handleMppsStatusChange);
+      mppsservice.startMppsServer(currentSettings.mwl.mppsPort || 7001, handleMppsStatusChange);
     } catch (mppsErr) {
       console.error('[Settings] ---> เริ่ม MPPS server ที่พอร์ตใหม่ไม่สำเร็จ:', mppsErr.message);
       worklistDirWarning += ` (คำเตือน: เริ่ม MPPS server ที่พอร์ตใหม่ไม่สำเร็จ - ${mppsErr.message} ระบบจะยังไม่รับสถานะ MPPS จากเครื่อง Modality จนกว่าจะแก้ port ให้ถูกต้อง)`;
     }
 
-    // ทดสอบว่าต่อฐานข้อมูลได้จริงหรือไม่ หลังบันทึกค่าใหม่
-    try {
-      await db.query('SELECT 1');
+    // ทดสอบว่าต่อฐานข้อมูลได้จริงหรือไม่ หลังบันทึกค่าใหม่ (ข้ามถ้า initPool ล้มเหลวไปแล้วด้านบน จะได้ไม่ error ซ้ำสองรอบ)
+    if (!dbConnectError) {
+      try {
+        await db.query('SELECT 1');
+      } catch (testErr) {
+        console.error('[Settings] ---> เชื่อมต่อฐานข้อมูลไม่สำเร็จหลังบันทึกค่าใหม่:', testErr);
+        dbConnectError = testErr;
+      }
+    }
+
+    if (!dbConnectError) {
       res.json({
         success: true,
         settings: maskSecrets(currentSettings),
         worklistDirActive: dicomService.getWorklistDir(),
         message: `บันทึกการตั้งค่าเรียบร้อย และเชื่อมต่อฐานข้อมูลสำเร็จ${worklistDirWarning}`,
       });
-    } catch (dbErr) {
-      console.error('[Settings] ---> เชื่อมต่อฐานข้อมูลไม่สำเร็จหลังบันทึกค่าใหม่:', dbErr);
-      const friendlyMessage = db.friendlyErrorMessage(dbErr);
+    } else {
+      const friendlyMessage = db.friendlyErrorMessage(dbConnectError);
       res.json({
         success: false,
         settings: maskSecrets(currentSettings),
         worklistDirActive: dicomService.getWorklistDir(),
         message: `บันทึกการตั้งค่าแล้ว แต่เชื่อมต่อฐานข้อมูลไม่สำเร็จ: ${friendlyMessage}${worklistDirWarning}`,
-        error: dbErr.message,
+        error: dbConnectError.message,
       });
     }
   } catch (err) {

@@ -32,15 +32,17 @@ function mapEncodingToPgClientEncoding(encoding) {
 async function initPool(settings) {
   const his = settings.his || {};
 
-  // ปิด pool เก่าก่อน (ถ้ามี) เพื่อไม่ให้ connection ค้าง
-  if (pool && typeof pool.end === 'function') {
-    pool.end().catch((err) => {
-      console.warn('[DB] ---> ปิด pool เดิมไม่สำเร็จ:', err.message);
-    });
-  } else if (currentType === 'mssql' && pool && typeof pool.close === 'function') {
-      pool.close().catch(err => {
-          console.warn('[DB] ---> ปิด mssql pool เดิมไม่สำเร็จ:', err.message);
+  // pg/mysql2 ใช้ .end() ส่วน mssql (ConnectionPool ของแพ็กเกจ mssql) ใช้ .close()
+  if (pool) {
+    if (typeof pool.end === 'function') {
+      pool.end().catch((err) => {
+        console.warn('[DB] ---> ปิด pool เดิมไม่สำเร็จ:', err.message);
       });
+    } else if (typeof pool.close === 'function') {
+      pool.close().catch((err) => {
+        console.warn('[DB] ---> ปิด mssql pool เดิมไม่สำเร็จ:', err.message);
+      });
+    }
   }
 
   if (his.dbType === 'mysql') {
@@ -111,24 +113,20 @@ async function query(sql, params = []) {
   }
 
   if (currentType === 'mssql') {
-    const mssql = require('mssql');
     const request = pool.request();
-    
-    // bind ค่า params กับ @p1, @p2 ...
+
     if (params && params.length > 0) {
       params.forEach((param, index) => {
         request.input(`p${index + 1}`, param);
       });
     }
 
-    // แก้ placeholder จาก $1 หรือ ? ให้เป็น @p1
-    let i = 1;
-    // รองรับทั้งแบบ ? (mysql) และ $1 (pg)
-    const mssqlString = sql.replace(/\?|\$\d+/g, () => `@p${i++}`);
+    const mssqlString = sql.replace(/\$(\d+)/g, (_match, n) => `@p${n}`);
 
     const result = await request.query(mssqlString);
-    // คืนค่ารูปแบบเดียวกันกับ pg/mysql คือมี .rows และ .rowCount
-    return { rows: result.recordset, rowCount: result.rowsAffected[0] || result.recordset.length };
+    const rows = result.recordset || [];
+    const rowCount = (Array.isArray(result.rowsAffected) && result.rowsAffected[0]) || rows.length;
+    return { rows, rowCount };
 
   } else if (currentType === 'mysql') {
     const mysqlSql = sql.replace(/\$\d+/g, '?');

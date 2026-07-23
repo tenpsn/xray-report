@@ -19,6 +19,10 @@ function safeRomanize(text) {
   }
 }
 
+function sanitizeFileName(accessionNumber) {
+  return String(accessionNumber).replace(/[\\/:]/g, '-');
+}
+
 // สำหรับชื่อแพทย์ที่มีคำนำหน้าติดอยู่ในสตริงเดียวกัน เช่น พญ.พิมพ์ชนก
 // -> ตัดคำนำหน้าออกก่อน ไม่ให้ถูกแปลงเป็นอังกฤษไปด้วย แล้วต่อกลับด้วยภาษาไทยเหมือนเดิม
 function romanizeDoctorName(text) {
@@ -183,9 +187,9 @@ async function generateWorklistFile(item) {
   return new Promise((resolve, reject) => {
     try {
       const accessionNumber = item.xn || `XN${Date.now()}`;
-      
+
       // สร้างชื่อไฟล์ที่ปลอดภัย โดยแทนที่ /, \, : ด้วยขีดกลาง (-)
-      const safeFileName = String(accessionNumber).replace(/[\\/:]/g, '-');
+      const safeFileName = sanitizeFileName(accessionNumber);
 
       const patientId = item.hn || 'UNKNOWN';
       const useEnglish = item.lang === 'en';
@@ -297,13 +301,14 @@ async function generateWorklistFile(item) {
 
 // ฟังก์ชันลบไฟล์ .wl
 function deleteWorklistFile(xn) {
-  const wlFilePath = path.join(WORKLIST_DIR, `${xn}.wl`);
+  const safeFileName = sanitizeFileName(xn);
+  const wlFilePath = path.join(WORKLIST_DIR, `${safeFileName}.wl`);
   if (fs.existsSync(wlFilePath)) {
     try {
       fs.unlinkSync(wlFilePath);
-      console.log(`[DICOM Service] ---> ลบไฟล์สำเร็จ: ${xn}.wl`);
+      console.log(`[DICOM Service] ---> ลบไฟล์สำเร็จ: ${safeFileName}.wl`);
     } catch (err) {
-      console.error(`[DICOM Service] ---> ลบไฟล์ไม่สำเร็จ: ${xn}.wl`, err);
+      console.error(`[DICOM Service] ---> ลบไฟล์ไม่สำเร็จ: ${safeFileName}.wl`, err);
     }
   }
   // ล้าง state ทิ้งด้วย เผื่อ XN นี้กลับมาใหม่ในอนาคต
