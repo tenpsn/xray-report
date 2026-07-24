@@ -15,19 +15,22 @@ const DEFAULT_FORM = {
     encoding: 'UTF8', // 'UTF8' | 'TIS620' | 'WIN874'
   },
   mwl: {
-    aet: 'ORTHANC', // AET ของ Worklist Server (เช่น Orthanc, DCM4CHEE, หรือ Modality)
+    usehl7: false,
+    hl7Port: '2575',
+    lang: 'th', // ภาษาเริ่มต้นสำหรับออเดอร์ที่รับผ่าน hl7
+    aet: 'ORTHANC', // AET ของ Worklist Server เช่น Orthanc
     port: '7000', // พอร์ตสำหรับรับ C-FIND จากเครื่อง Modality
-    mppsPort: '7001', // พอร์ตแยกสำหรับรับ MPPS (N-CREATE/N-SET) จากเครื่อง Modality
-    worklistDir: '', // โฟลเดอร์เก็บไฟล์ .wl — เว้นว่าง = ใช้ backend/worklists (ค่าเริ่มต้น)
+    mppsPort: '7001', // พอร์ตแยกสำหรับรับ MPPS N-CREATE/N-SET จากเครื่อง Modality
+    worklistDir: '', // โฟลเดอร์เก็บไฟล์ .wl — เว้นว่าง = ใช้ backend/worklists
   },
 };
 
 export default function SettingsPage() {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [status, setStatus] = useState('กำลังโหลดการตั้งค่า...');
-  const [statusType, setStatusType] = useState('info'); // 'info' | 'success' | 'error'
+  const [statusType, setStatusType] = useState('info');
   const [saving, setSaving] = useState(false);
-  const [worklistDirActive, setWorklistDirActive] = useState(''); // path จริงที่ backend ใช้งานอยู่ตอนนี้
+  const [worklistDirActive, setWorklistDirActive] = useState('');
 
   // state สำหรับหน้าต่างเลือกโฟลเดอร์ worklists
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -157,7 +160,7 @@ export default function SettingsPage() {
       <div className={`status status-${statusType}`}>{status}</div>
 
       <div className="settings-card">
-        <h2>HIS (HOSXP) — Database</h2>
+        <h2>HIS — Database</h2>
         <div className="settings-grid">
           <label>
             Database Type
@@ -237,6 +240,40 @@ export default function SettingsPage() {
         <h2>MWL — DICOM Modality Worklist</h2>
         <div className="settings-grid">
           <label>
+            HL7
+            <select
+              value={form.mwl.usehl7 ? 'true' : 'false'}
+              onChange={(e) => updateMwl('usehl7', e.target.value === 'true')}
+            >
+              <option value="false">Disabled</option>
+              <option value="true">Enabled</option>
+            </select>
+          </label>
+          {form.mwl.usehl7 && (
+            <>
+              <label>
+                HL7 Port
+                <input
+                  type="text"
+                  placeholder="เช่น 2575"
+                  value={form.mwl.hl7Port}
+                  onChange={(e) => updateMwl('hl7Port', e.target.value)}
+                />
+              </label>
+              <label>
+                HL7 Language
+                <select
+                  value={form.mwl.lang === 'en' ? 'en' : 'th'}
+                  onChange={(e) => updateMwl('lang', e.target.value)}
+                >
+                  <option value="th">TH</option>
+                  <option value="en">ENG</option>
+                </select>
+              </label>
+            </>
+          )}
+
+          <label>
             AET
             <input
               type="text"
@@ -272,7 +309,7 @@ export default function SettingsPage() {
               <input
                 type="text"
                 readOnly
-                placeholder="ค่าเริ่มต้น (backend/worklists) — กดปุ่มด้านขวาเพื่อเลือก"
+                placeholder="ค่าเริ่มต้น backend/worklists"
                 value={form.mwl.worklistDir}
                 onClick={openPicker}
                 style={{ flex: 1, minWidth: '200px', cursor: 'pointer', background: '#f9fafb' }}

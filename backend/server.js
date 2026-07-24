@@ -8,7 +8,8 @@ const path = require('path');
 const dicomService = require('./dicomService');
 const settingsService = require('./settingsService');
 const db = require('./db');
-const mppsservice = require('./mppsservice');
+const Mppsservice = require('./Mppsservice');
+const hl7Service = require('./hl7Service');
 
 const app = express();
 const PORT = process.env.PORT;
@@ -42,11 +43,16 @@ app.use(cors({ origin: CORS_ORIGIN }));
 // รับข้อมูลแบบ JSON
 app.use(express.json());
 
-// โหลดการตั้งค่า (HIS DB + MWL) แล้วเปิด connection pool ตั้งแต่ตอนสตาร์ทเซิร์ฟเวอร์
+// โหลดการตั้งค่า (HIS MWL) แล้วเปิด connection
 let currentSettings = settingsService.loadSettings();
-db.initPool(currentSettings).catch(err => console.error('[DB] ---> สตาร์ทเซิร์ฟเวอร์เชื่อมต่อ DB ไม่สำเร็จ:', err.message));
+const dbReadyPromise = db.initPool(currentSettings).catch(err => {
+  console.error('[DB] ---> สตาร์ทเซิร์ฟเวอร์เชื่อมต่อ DB ไม่สำเร็จ:', err.message);
+});
 
-// ตั้งค่าโฟลเดอร์เก็บไฟล์ worklist ตามค่าที่บันทึกไว้ (ถ้าไม่ได้ตั้งไว้ จะใช้ backend/worklists เป็นค่า default)
+// เพิ่มตัวแปรเช็คสถานะ hl7
+let ishl7Enabled = currentSettings.mwl.usehl7 === true;
+
+// ตั้งค่าโฟลเดอร์เก็บไฟล์ worklist ตามค่าที่บันทึกไว้ ถ้าไม่ได้ตั้ง จะใช้ backend/worklists
 try {
   dicomService.setWorklistDir(currentSettings.mwl.worklistDir);
 } catch (err) {
@@ -54,7 +60,6 @@ try {
 }
 
 // เมื่อเครื่อง Modality ส่งสถานะ MPPS กลับมา (ตรวจเสร็จ/ยกเลิก) ให้ลบไฟล์ worklist (.wl) ทิ้ง
-// เพื่อไม่ให้เครื่องดึงรายการเดิมไปทำซ้ำอีก (ไม่ได้ไปแก้สถานะใน HIS DB ให้ ยังต้องยืนยันผลที่ HIS ตามปกติ)
 function handleMppsStatusChange(accessionNumber, status) {
   if (status === 'COMPLETED' || status === 'DISCONTINUED') {
     dicomService.deleteWorklistFile(accessionNumber);
@@ -62,37 +67,46 @@ function handleMppsStatusChange(accessionNumber, status) {
   }
 }
 
-// เริ่ม MPPS server ตอนสตาร์ท — ถ้าเริ่มไม่สำเร็จ (เช่น port ถูกใช้งานอยู่แล้วจากอีก process ที่รันซ้อนอยู่)
-// ให้ปิดโปรแกรมไปเลยแทนที่จะปล่อยให้รันต่อในสภาพที่ MPPS ใช้งานไม่ได้โดยไม่รู้ตัว
-// (PM2 ตั้ง autorestart: true ไว้แล้ว จะลองสตาร์ทให้ใหม่เอง)
 try {
-  mppsservice.startMppsServer(currentSettings.mwl.mppsPort || 7001, handleMppsStatusChange);
+  Mppsservice.startMppsServer(currentSettings.mwl.mppsPort || 7001, handleMppsStatusChange);
 } catch (err) {
   console.error('[Server] ---> เริ่ม MPPS server ไม่สำเร็จตอนสตาร์ท ปิดโปรแกรม:', err.message);
   process.exit(1);
 }
 
-// หลัง uncaught exception/unhandled rejection เกิดขึ้น ไม่ควรปล่อยให้ process ทำงานต่อ
-// เพราะ state ภายใน (DB pool, DICOM listener ฯลฯ) อาจเพี้ยนไปแล้วโดยไม่รู้ตัว (ตามคำแนะนำของ Node.js เอง)
-// ให้ log ไว้ให้ชัดเจนแล้ว exit(1) ปล่อยให้ PM2 (autorestart: true) เริ่ม process ใหม่แบบสะอาดแทน
+function managehl7Service(settings) {
+  ishl7Enabled = settings.mwl.usehl7 === true; // อัปเดตสถานะตรงนี้
+  
+  if (ishl7Enabled) {
+    const hl7Port = settings.mwl.hl7Port;
+    hl7Service.starthl7Server(hl7Port);
+    console.log('[Server] ---> เปิดใช้งาน HL7 ปิดการดึงข้อมูลจาก DB');
+  } else {
+    hl7Service.stophl7Server();
+    console.log('[Server] ---> ปิดใช้งาน HL7 กลับมาดึงข้อมูลจาก DB');
+  }
+}
+
+managehl7Service(currentSettings);
+
 process.on('uncaughtException', (err) => {
-  console.error('[Server] ---> Uncaught Exception (ปิดโปรแกรมเพื่อความปลอดภัย ให้ PM2 restart ใหม่):', err);
+  console.error('[Server] ---> Uncaught Exception ปิดโปรแกรมเพื่อความปลอดภัย ให้ PM2 restart:', err);
   process.exit(1);
 });
 process.on('unhandledRejection', (reason) => {
-  console.error('[Server] ---> Unhandled Rejection (ปิดโปรแกรมเพื่อความปลอดภัย ให้ PM2 restart ใหม่):', reason);
+  console.error('[Server] ---> Unhandled Rejection ปิดโปรแกรมเพื่อความปลอดภัย ให้ PM2 restart:', reason);
   process.exit(1);
 });
 process.on('SIGINT', () => {
-  mppsservice.stopMppsServer();
+  Mppsservice.stopMppsServer();
   process.exit(0);
 });
 process.on('SIGTERM', () => {
-  mppsservice.stopMppsServer();
+  Mppsservice.stopMppsServer();
   process.exit(0);
 });
 
-// เพิ่ม parameter รับอาร์เรย์แต่ละสถานะเข้ามา + dbType (postgres/mysql/mssql) เพื่อสลับ syntax วันที่ให้ถูกต้อง
+// dbType (postgres/mysql/mssql) เลือก query ให้ตรงกับ schema จริงของฐานข้อมูล
 function buildXrayReportQuery(dateback, include, exclude, confirm, existingXNs = [], xns_NN = [], xns_YN = [], xns_NY = [], dbType = 'postgres') {
   const params = [];
   let paramIndex = 1;
@@ -105,7 +119,7 @@ function buildXrayReportQuery(dateback, include, exclude, confirm, existingXNs =
         v.VN as xn, 
         pt.Code as hn, 
         rrh.Code as cid, 
-        '' as pname,
+        tt.ShortName as pname,
         p.FirstName as fname, 
         p.LastName as lname,
         CONVERT(varchar(10), p.BirthDT, 23) as birthday, 
@@ -120,7 +134,7 @@ function buildXrayReportQuery(dateback, include, exclude, confirm, existingXNs =
         '' as xray_items_group,
         'N' as confirm, 
         'N' as confirm_read_film,
-        '' as Doctor, 
+        LTRIM(CONCAT(tdoc.ShortName, ' ', pd.FirstName, ' ', pd.LastName)) as Doctor,
         rr.ItemKey as xray_items_code, 
         '' as Modality,
         '' as stuid, 
@@ -129,7 +143,11 @@ function buildXrayReportQuery(dateback, include, exclude, confirm, existingXNs =
       INNER JOIN RadRequest rr ON rrh.RadRequestHeaderKey = rr.RadRequestHeaderKey
       INNER JOIN Patient pt ON rrh.PatientKey = pt.PatientKey
       INNER JOIN Person p ON pt.PatientKey = p.PersonKey
+      LEFT JOIN Title tt ON p.TitleKey = tt.TitleKey
       INNER JOIN Visit v ON v.VisitKey = rrh.VisitKey
+      LEFT JOIN Employee doc ON rrh.IssueDoctorKey = doc.EmployeeKey
+      LEFT JOIN Person pd ON doc.EmployeeKey = pd.PersonKey
+      LEFT JOIN Title tdoc ON pd.TitleKey = tdoc.TitleKey
       WHERE DATEDIFF(day, rrh.IssueDT, GETDATE()) BETWEEN 0 AND $${paramIndex}
         AND rrh.IsDone = 0
     `;
@@ -282,6 +300,8 @@ app.post('/api/settings', async (req, res) => {
 
     currentSettings = settingsService.saveSettings({ his: reconciledHis, mwl: reconciledMwl });
 
+    managehl7Service(currentSettings);
+
     let dbConnectError = null;
     try {
       await db.initPool(currentSettings);
@@ -290,7 +310,7 @@ app.post('/api/settings', async (req, res) => {
       dbConnectError = initErr;
     }
 
-    // สลับไปใช้โฟลเดอร์ worklist ใหม่ตามที่ตั้งค่ามา (ถ้าตั้งไม่สำเร็จ เช่น path ผิด/ไม่มีสิทธิ์ ให้แจ้งเตือนแต่ไม่ทำให้บันทึกค่าอื่นล้มเหลวไปด้วย)
+    // สลับไปใช้โฟลเดอร์ worklist ใหม่ตามที่ตั้งค่า
     let worklistDirWarning = '';
     try {
       dicomService.setWorklistDir(currentSettings.mwl.worklistDir);
@@ -299,16 +319,15 @@ app.post('/api/settings', async (req, res) => {
       worklistDirWarning = ` (คำเตือน: ตั้งค่าโฟลเดอร์ worklists ไม่สำเร็จ - ${dirErr.message} ระบบจะใช้โฟลเดอร์เดิมต่อไป: ${dicomService.getWorklistDir()})`;
     }
 
-    // เริ่ม MPPS server ใหม่ด้วย port ล่าสุด — ถ้าเริ่มไม่สำเร็จ (เช่น port ชนกับโปรแกรมอื่น) แค่แจ้งเตือน
-    // ไม่ทำให้การบันทึกค่าอื่นๆ (DB, worklist dir) ล้มเหลวไปด้วย และไม่ปิดทั้งเซิร์ฟเวอร์ทิ้ง
+    // เริ่ม MPPS server ใหม่ด้วย port ล่าสุด — ถ้าเริ่มไม่สำเร็จ จะแจ้งเตือน
     try {
-      mppsservice.startMppsServer(currentSettings.mwl.mppsPort || 7001, handleMppsStatusChange);
+      Mppsservice.startMppsServer(currentSettings.mwl.mppsPort || 7001, handleMppsStatusChange);
     } catch (mppsErr) {
       console.error('[Settings] ---> เริ่ม MPPS server ที่พอร์ตใหม่ไม่สำเร็จ:', mppsErr.message);
       worklistDirWarning += ` (คำเตือน: เริ่ม MPPS server ที่พอร์ตใหม่ไม่สำเร็จ - ${mppsErr.message} ระบบจะยังไม่รับสถานะ MPPS จากเครื่อง Modality จนกว่าจะแก้ port ให้ถูกต้อง)`;
     }
 
-    // ทดสอบว่าต่อฐานข้อมูลได้จริงหรือไม่ หลังบันทึกค่าใหม่ (ข้ามถ้า initPool ล้มเหลวไปแล้วด้านบน จะได้ไม่ error ซ้ำสองรอบ)
+    // ทดสอบว่าต่อฐานข้อมูลได้จริงหรือไม่ หลังบันทึกค่าใหม่
     if (!dbConnectError) {
       try {
         await db.query('SELECT 1');
@@ -350,7 +369,7 @@ const WORKLIST_CONCURRENCY = 5;
 
 async function processWorklistFiles(records, displayLang) {
   if (isGeneratingWorklists) {
-    console.warn('[Worklist] ---> รอบก่อนหน้ายังสร้างไฟล์ไม่เสร็จ ข้ามรอบนี้ไปก่อน (รอบถัดไปจะจับข้อมูลที่เปลี่ยนแปลงเองอยู่แล้ว)');
+    console.warn('[Worklist] ---> รอบก่อนหน้ายังสร้างไฟล์ไม่เสร็จ ข้ามรอบนี้ไปก่อน');
     return;
   }
   isGeneratingWorklists = true;
@@ -393,16 +412,14 @@ async function processWorklistFiles(records, displayLang) {
 
 app.post('/api/xray-report', async (req, res) => {
   if (isProcessingXrayReport) {
-    return res.status(429).json({ success: false, message: ' ---> กำลังประมวลผลรอบก่อนหน้าอยู่ กรุณาลองใหม่อีกครั้ง' });
+    return res.status(429).json({ success: false, message: 'กำลังประมวลผลรอบก่อนหน้าอยู่ กรุณาลองใหม่อีกครั้ง' });
   }
   isProcessingXrayReport = true;
   try {
-    // ดึงตัวแปรใหม่ที่ส่งมาจาก Frontend มารับใน req.body
     const { dateback = 1, include, exclude, confirm, lang, existingXNs, xns_NN, xns_YN, xns_NY } = req.body;
     const confirmFlag = confirm === true || confirm === 'true' || confirm === '1';
     const displayLang = lang === 'en' ? 'en' : 'th';
 
-    // ส่งค่าทั้งหมดเข้าไปในฟังก์ชันสร้าง SQL (พร้อม dbType ปัจจุบัน)
     const { sql, params } = buildXrayReportQuery(
       dateback, include, exclude, confirmFlag,
       existingXNs, xns_NN, xns_YN, xns_NY,
@@ -418,11 +435,14 @@ app.post('/api/xray-report', async (req, res) => {
 
     res.json({ success: true, count: result.rowCount, data: records });
 
-    if (records.length > 0) {
+    if (records.length > 0 && !ishl7Enabled) {
       processWorklistFiles(records, displayLang).catch((err) => {
         console.error('[Worklist] ---> เกิดข้อผิดพลาดขณะสร้างไฟล์ worklist แบบ background:', err);
       });
+    } else if (ishl7Enabled && records.length > 0) {
+      console.log('[Worklist] ---> เปิด HL7 ข้ามการสร้างไฟล์ Worklist จาก DB');
     }
+
   } catch (err) {
     console.error('Query error:', err);
     const friendlyMessage = db.friendlyErrorMessage(err);
@@ -432,12 +452,12 @@ app.post('/api/xray-report', async (req, res) => {
   }
 });
 
-// เช็คว่า path ที่ให้มาเป็น "ราก" ของไดรฟ์ Windows หรือไม่ เช่น "D:\" หรือ "D:"
+// เช็คว่า path ที่ให้มาเป็นของไดรฟ์ Windows หรือไม่ เช่น "D:\" หรือ "D:"
 function isWindowsDriveRoot(p) {
   return /^[a-zA-Z]:[\\/]?$/.test(p);
 }
 
-// หาไดรฟ์ทั้งหมดที่มีอยู่จริงบนเครื่อง Windows (A: - Z:) โดยเช็คว่าเข้าถึงได้จริงหรือไม่
+// หาไดรฟ์ทั้งหมดที่มีอยู่จริงบนเครื่อง Windows (A: - Z:)
 function listWindowsDrives() {
   const drives = [];
   for (let i = 65; i <= 90; i++) {
@@ -448,13 +468,13 @@ function listWindowsDrives() {
         drives.push({ name: `${letter}:`, path: root });
       }
     } catch (err) {
-      // ข้ามไดรฟ์นี้ไป (เช่น ไดรฟ์ CD-ROM ที่ไม่มีแผ่น)
+      // ข้ามไดรฟ์นี้ไป
     }
   }
   return drives;
 }
 
-// ถ้าไม่ส่ง path หรือส่งค่าว่าง จะคืนรายชื่อไดรฟ์ทั้งหมดให้เลือกก่อน
+// ถ้าไม่ส่งหรือส่งค่าว่าง จะคืนรายชื่อไดรฟ์ทั้งหมดให้เลือกก่อน
 app.get('/api/fs/browse', (req, res) => {
   const platform = os.platform();
   let targetPath = (req.query.path || '').toString().trim();
@@ -464,7 +484,7 @@ app.get('/api/fs/browse', (req, res) => {
       if (platform === 'win32') {
         return res.json({ success: true, path: '', parent: null, isRoot: true, folders: listWindowsDrives() });
       }
-      targetPath = '/'; // Linux/Mac ไม่มีแนวคิดไดรฟ์ ให้เริ่มที่ root เลย
+      targetPath = '/'; // Linux/Mac ไม่มีแนวคิดไดรฟ์ ให้เริ่มที่ root
     }
 
     const resolved = path.resolve(targetPath);
@@ -492,19 +512,19 @@ app.get('/api/fs/browse', (req, res) => {
         try {
           return entry.isDirectory();
         } catch (err) {
-          return false; // ข้าม entry ที่ stat ไม่ได้ (เช่น junction เสีย)
+          return false;
         }
       })
       .map((entry) => ({ name: entry.name, path: path.join(resolved, entry.name) }))
       .sort((a, b) => a.name.localeCompare(b.name, 'th'));
 
-    // หา parent ของ path ปัจจุบัน เพื่อทำปุ่ม "ย้อนกลับ"
+    // ทำปุ่ม "ย้อนกลับ"
     let parent;
     if (platform === 'win32' && isWindowsDriveRoot(resolved)) {
-      parent = ''; // อยู่ที่รากไดรฟ์แล้ว ย้อนกลับ = กลับไปหน้าเลือกไดรฟ์
+      parent = ''; // ย้อนกลับ = กลับไปหน้าเลือกไดรฟ์
     } else {
       const up = path.dirname(resolved);
-      parent = up === resolved ? null : up; // ถึง root ของระบบไฟล์แล้ว (เช่น "/" บน Linux) ไม่มี parent ต่อ
+      parent = up === resolved ? null : up;
     }
 
     res.json({ success: true, path: resolved, parent, isRoot: false, folders });
@@ -513,7 +533,7 @@ app.get('/api/fs/browse', (req, res) => {
   }
 });
 
-// POST /api/fs/mkdir { parentPath, name } -> สร้างโฟลเดอร์ย่อยใหม่ในตำแหน่งที่กำลังดูอยู่
+// สร้างโฟลเดอร์ย่อยใหม่
 app.post('/api/fs/mkdir', (req, res) => {
   try {
     const { parentPath, name } = req.body;
@@ -535,15 +555,19 @@ app.post('/api/fs/mkdir', (req, res) => {
   }
 });
 
-const httpServer = app.listen(PORT, () => {
-  console.log(`Backend API กำลังทำงานที่ ---> http://localhost:${PORT}`);
-});
+// รอให้พยายามต่อ DB รอบแรกเสร็จก่อนแล้วค่อยเปิดพอร์ตรับ request
+let httpServer;
+dbReadyPromise.finally(() => {
+  httpServer = app.listen(PORT, () => {
+    console.log(`[Server] ---> Backend API กำลังทำงานที่ ---> http://localhost:${PORT}`);
+  });
 
-httpServer.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.error(`[Server] ---> Port ${PORT} ถูกใช้งานอยู่แล้วอาจมีอีก process รันซ้อนอยู่`);
-  } else {
-    console.error('[Server] ---> เปิด server หลักไม่สำเร็จ:', err);
-  }
-  process.exit(1);
+  httpServer.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[Server] ---> Port ${PORT} ถูกใช้งานอยู่แล้ว`);
+    } else {
+      console.error('[Server] ---> เปิด server ไม่สำเร็จ:', err);
+    }
+    process.exit(1);
+  });
 });

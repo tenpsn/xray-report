@@ -1,9 +1,9 @@
-// รับ MPPS จากเครื่อง Modality โดยตรง
-// ใช้ dcmjs-dimse ใช้แค่เพื่อ "รับรู้สถานะ" แล้วลบไฟล์ worklist ทิ้ง
+// รับ MPPS จากเครื่อง Modality
+// ใช้ dcmjs-dimse ใช้แค่เพื่อ "รับรู้สถานะ" แล้วลบไฟล์ worklist
 
 const path = require('path');
 const fs = require('fs');
-const util = require('util'); // เพิ่ม util สำหรับจัดรูปแบบข้อความ log
+const util = require('util');
 const dcmjsDimse = require('dcmjs-dimse');
 
 // เก็บไว้ในโฟลเดอร์ logs/ แยกต่างหาก หมุนไฟล์ตาม "วัน" เก็บย้อนหลังตาม LOG_RETENTION_DAYS วัน เกินนี้ลบทิ้งอัตโนมัติ
@@ -25,7 +25,7 @@ function getLogFilePathForDate(date) {
   return path.join(LOG_DIR, `${LOG_PREFIX}-${y}-${m}-${d}.log`);
 }
 
-// ลบไฟล์ log ที่เก่าเกิน LOG_RETENTION_DAYS วันทิ้'
+// ลบไฟล์ log ที่เก่าเกิน LOG_RETENTION_DAYS วันทิ้ง
 function cleanupOldLogs() {
   try {
     const files = fs.readdirSync(LOG_DIR);
@@ -44,7 +44,7 @@ function cleanupOldLogs() {
       if (ageDays > LOG_RETENTION_DAYS) {
         try {
           fs.unlinkSync(path.join(LOG_DIR, file));
-          console.log(`[MPPS] ---> ลบไฟล์ log อายุเกิน ${LOG_RETENTION_DAYS} วัน: ${file}`);
+          console.log(`[MPPS] ---> ลบไฟล์ log อายุเกิน 7 วัน: ${file}`);
         } catch (err) {
           // ข้ามไฟล์นี้ไป ไม่ทำให้ cleanup ไฟล์อื่นพังตาม
         }
@@ -58,11 +58,11 @@ function cleanupOldLogs() {
 let currentLogDateKey = null;
 let logStream = null;
 
-// เช็คว่าวันเปลี่ยนไปหรือยัง ถ้าเปลี่ยนวัน (หรือยังไม่เคยเปิด) ให้ปิด stream เดิมแล้วเปิดไฟล์ของวันใหม่
+// เช็คว่าวันเปลี่ยนไปหรือยัง ถ้าเปลี่ยนวันหรือยังไม่เคยเปิด ให้ปิด stream เดิมแล้วเปิดไฟล์ของวันใหม่
 // พร้อมรัน cleanup ไฟล์เก่าไปด้วยทุกครั้งที่ขึ้นวันใหม่
 function ensureLogStreamForToday() {
   const now = new Date();
-  const dateKey = now.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+  const dateKey = now.toISOString().slice(0, 10); // YYYY-MM-DD
 
   if (currentLogDateKey === dateKey && logStream) return;
 
@@ -76,7 +76,7 @@ function ensureLogStreamForToday() {
   cleanupOldLogs();
 }
 
-// เปิด stream ทันทีตอนโหลดโมดูล (เผื่อยังไม่มี log เขียนเข้ามาเลยในวันนั้น ก็ยังมีการ cleanup เกิดขึ้น)
+// เปิด stream ทันทีตอนโหลดโมดูล เผื่อยังไม่มี log เขียนเข้ามาเลยในวันนั้น ก็ยังมีการ cleanup
 ensureLogStreamForToday();
 
 // เขียน log 1 บรรทัด พร้อมเช็คว่าต้องขึ้นไฟล์วันใหม่หรือยังก่อนทุกครั้ง
@@ -116,7 +116,7 @@ function saveMppsMap() {
   }
 }
 
-// ดึง Accession Number ออกจาก ScheduledStepAttributesSequence (มีเฉพาะตอน N-CREATE เท่านั้น)
+// ดึง Accession Number ออกจาก ScheduledStepAttributesSequence มีเฉพาะตอน N-CREATE เท่านั้น
 function extractAccessionNumber(dataset) {
   try {
     const seq = dataset.getElement('ScheduledStepAttributesSequence');
@@ -136,7 +136,7 @@ function createMppsScpClass() {
       super(socket, opts);
     }
 
-    // ยอมรับ Association จากทุกเครื่อง Modality ที่ขอเชื่อมต่อมา (ไม่เช็ค AE Title เพื่อความง่าย)
+    // ยอมรับ Association จากทุกเครื่อง Modality ที่ขอเชื่อมต่อมา ไม่เช็ค AE Title
     associationRequested(association) {
       const contexts = association.getPresentationContexts();
       contexts.forEach((c) => {
@@ -172,7 +172,7 @@ function createMppsScpClass() {
       callback(response);
     }
 
-    // N-CREATE = เริ่มตรวจ (สถานะ "IN PROGRESS")
+    // N-CREATE = เริ่มตรวจสถานะ IN PROGRESS
     nCreateRequest(request, callback) {
       try {
         const dataset = request.getDataset();
@@ -184,7 +184,7 @@ function createMppsScpClass() {
           saveMppsMap();
         }
 
-        console.log(`[MPPS] ---> ได้รับ N-CREATE (เริ่มตรวจ) สำหรับ XN: ${accessionNumber || '(ไม่ทราบ Accession Number)'}`);
+        console.log(`[MPPS] ---> ได้รับ N-CREATE (เริ่มตรวจ) สำหรับ XN: ${accessionNumber || 'ไม่ทราบ Accession Number'}`);
 
         if (onStatusChangeCallback && accessionNumber) {
           onStatusChangeCallback(accessionNumber, 'IN PROGRESS');
@@ -201,7 +201,7 @@ function createMppsScpClass() {
       }
     }
 
-    // N-SET = อัพเดทสถานะ (ระหว่างตรวจ / ตรวจเสร็จ "COMPLETED" / ยกเลิก "DISCONTINUED")
+    // N-SET = อัพเดทสถานะระหว่างตรวจ / ตรวจเสร็จ "COMPLETED" / ยกเลิก "DISCONTINUED"
     nSetRequest(request, callback) {
       try {
         const dataset = request.getDataset();
@@ -216,13 +216,13 @@ function createMppsScpClass() {
         const rawStatus = dataset.getElement('PerformedProcedureStepStatus') || '';
         const status = String(rawStatus).toUpperCase();
 
-        console.log(`[MPPS] ---> ได้รับ N-SET สถานะ "${status}" สำหรับ XN: ${accessionNumber || '(ไม่ทราบ Accession Number)'}`);
+        console.log(`[MPPS] ---> ได้รับ N-SET สถานะ "${status}" สำหรับ XN: ${accessionNumber || 'ไม่ทราบ Accession Number'}`);
 
         if (onStatusChangeCallback && accessionNumber && status) {
           onStatusChangeCallback(accessionNumber, status);
         }
 
-        // จบงานแล้ว (เสร็จ/ยกเลิก) ไม่ต้องเก็บ mapping นี้ต่อ
+        // จบงาน เสร็จ/ยกเลิก ไม่ต้องเก็บ mapping นี้ต่อ
         if (sopInstanceUid && (status === 'COMPLETED' || status === 'DISCONTINUED')) {
           delete mppsMap[sopInstanceUid];
           saveMppsMap();
@@ -245,7 +245,7 @@ function createMppsScpClass() {
   };
 }
 
-// หยุด MPPS server (ใช้ตอน restart ด้วยพอร์ตใหม่ หรือตอนปิดโปรแกรม)
+// หยุด MPPS server ใช้ตอน restart ด้วยพอร์ตใหม่ หรือตอนปิดโปรแกรม
 function stopMppsServer() {
   if (server) {
     try {
@@ -257,13 +257,7 @@ function stopMppsServer() {
   }
 }
 
-// เริ่ม (หรือ restart) MPPS SCP server ที่พอร์ตที่กำหนด
-// onStatusChange(accessionNumber, status) จะถูกเรียกทุกครั้งที่ได้รับสถานะใหม่จากเครื่อง Modality
-// status ที่เป็นไปได้: 'IN PROGRESS' | 'COMPLETED' | 'DISCONTINUED'
-//
-// หมายเหตุ: ฟังก์ชันนี้ไม่ครอบ try/catch ไว้เอง (ต่างจากเดิม) — ถ้า listen() ไม่สำเร็จแบบทันที
-// (เช่น port ผิดรูปแบบ) จะโยน error ออกไปให้ผู้เรียก (server.js) เป็นคนตัดสินใจว่าจะถือเป็นเรื่องร้ายแรง
-// ต้องปิดโปรแกรมหรือไม่ (ตอนสตาร์ทเครื่อง = ร้ายแรง / ตอนเปลี่ยนค่าจากหน้าเว็บ = แค่แจ้งเตือน ไม่ปิดทั้งระบบ)
+// เริ่ม/รีสตาร์ท MPPS Server เพื่อรับอัปเดตสถานะการตรวจ โดยจะโยน Error ให้ผู้เรียก server.js จัดการเองหากเปิดพอร์ตไม่สำเร็จ
 function startMppsServer(port, onStatusChange) {
   stopMppsServer();
   onStatusChangeCallback = onStatusChange;
@@ -274,8 +268,6 @@ function startMppsServer(port, onStatusChange) {
   server.on('networkError', (e) => {
     const code = e && e.code;
     if (code === 'EADDRINUSE') {
-      // เคสนี้มักเกิดแบบ asynchronous (มาทีหลังตอน listen() คืนค่าไปแล้ว) จึง throw กลับไปที่ผู้เรียกไม่ได้
-      // เลย log ให้ชัดเจนที่สุดแทน เพื่อให้เห็นสาเหตุง่ายๆ ใน PM2 logs
       console.error(`[MPPS] ---> พอร์ต ${port} ถูกใช้งานอยู่แล้ว ไม่สามารถรับ MPPS จากเครื่อง Modality ได้ กรุณาตรวจสอบว่ามีโปรแกรมอื่น หรือ backend อีก instance ใช้พอร์ตนี้อยู่ก่อนแล้วหรือไม่`);
     } else {
       console.warn('[MPPS] ---> Network error:', (e && e.message) || e);
@@ -286,4 +278,7 @@ function startMppsServer(port, onStatusChange) {
   console.log(`[MPPS] ---> เริ่ม MPPS SCP server ที่พอร์ต ---> ${port}`);
 }
 
-module.exports = { startMppsServer, stopMppsServer };
+module.exports = { 
+  startMppsServer, 
+  stopMppsServer 
+};

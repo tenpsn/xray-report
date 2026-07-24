@@ -1,5 +1,5 @@
 // รองรับ Postgres, MySQL และ MS SQL Server
-// โดยเลือกใช้ตัวไหนตามค่า settings.his.dbType ที่ตั้งจากหน้าเว็บ (Settings)
+// โดยเลือกใช้ตัวไหนตามค่า settings.his.dbType ที่ตั้งจากหน้าเว็บ
 
 let pool = null;
 let currentType = null;
@@ -28,7 +28,7 @@ function mapEncodingToPgClientEncoding(encoding) {
   return allowed.includes(value) ? value : 'UTF8';
 }
 
-// (สร้าง/สร้างใหม่) connection pool ตามการตั้งค่าปัจจุบัน
+// (สร้าง/สร้างใหม่) connection ตามการตั้งค่าปัจจุบัน
 async function initPool(settings) {
   const his = settings.his || {};
 
@@ -77,6 +77,9 @@ async function initPool(settings) {
     };
     
     const poolObj = new sql.ConnectionPool(config);
+    poolObj.on('error', (err) => {
+      console.warn('[DB] ---> MS SQL pool error:', err.message);
+    });
     pool = await poolObj.connect();
     currentType = 'mssql';
     console.log(`[DB] ---> เชื่อมต่อ MS SQL Server: ${his.host}:${his.port}/${his.database}`);
@@ -93,7 +96,7 @@ async function initPool(settings) {
       password: his.password,
       connectionTimeoutMillis: 5000, // ต่อไม่ติดภายใน 5 วิ ให้ error เลย ไม่ค้างรอ
     });
-    // ตั้งค่า client_encoding ทุกครั้งที่มีการเปิด connection ใหม่ใน pool
+    // ตั้งค่า client_encoding ทุกครั้งที่มีการเปิด connection ใหม่
     pool.on('connect', (client) => {
       client.query(`SET client_encoding TO '${clientEncoding}'`).catch((err) => {
         console.warn('[DB] ---> ตั้งค่า client_encoding ไม่สำเร็จ:', err.message);
@@ -109,7 +112,7 @@ async function initPool(settings) {
 // รันคำสั่ง SQL 
 async function query(sql, params = []) {
   if (!pool) {
-    throw new Error('ยังไม่ได้เชื่อมต่อฐานข้อมูล (pool is not initialized)');
+    throw new Error('ยังไม่ได้เชื่อมต่อฐานข้อมูล');
   }
 
   if (currentType === 'mssql') {
@@ -153,7 +156,7 @@ function friendlyErrorMessage(err) {
       return 'เชื่อมต่อฐานข้อมูลไม่ติด กรุณาตรวจสอบ Port';
     case 'ETIMEDOUT':
     case 'ETIMEOUT':
-      return 'หมดเวลาเชื่อมต่อฐานข้อมูล กรุณาตรวจสอบ IP Address / Port หรือไฟร์วอลล์';
+      return 'หมดเวลาเชื่อมต่อฐานข้อมูล กรุณาตรวจสอบ IP Address / Port';
 
     // Postgres
     case '28P01':

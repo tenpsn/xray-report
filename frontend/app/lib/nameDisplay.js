@@ -1,6 +1,6 @@
 import romanize from '@dehoist/romanize-thai';
 
-// ตัดข้อความให้เหลือ 17 ตัวอักษร แล้วต่อท้ายด้วย "..." (รวมเป็น 20 ตัวอักษร) ถ้ายาวเกิน
+// ตัดข้อความให้เหลือ 17 ตัวอักษร แล้วต่อท้ายด้วย ... รวมเป็น 20 ตัวอักษร
 const MAX_LEN = 17;
 
 export function truncateName(text) {
@@ -9,14 +9,14 @@ export function truncateName(text) {
   return str.length > MAX_LEN ? str.slice(0, MAX_LEN) + '...' : str;
 }
 
-// คำนำหน้า (นาย/นาง/นพ/พญ ฯลฯ) ไม่ต้องแปลงเป็นภาษาอังกฤษ ให้แสดงเป็นภาษาไทยเสมอ ไม่ว่าจะเลือกภาษาอะไร
+// คำนำหน้า (นาย/นาง/นพ/พญ ฯลฯ) ไม่ต้องแปลงเป็นภาษาอังกฤษ ให้แสดงเป็นภาษาไทยเสมอ
 export function formatPrefixField(thaiText) {
   return truncateName(thaiText);
 }
 
 // ชื่อ / นามสกุล
-// lang === 'th' -> โชว์ภาษาไทย (ตัดตามกฎ 17+...)
-// lang === 'en' -> โชว์เฉพาะภาษาอังกฤษ (ตัดตามกฎ 17+...)
+// lang === 'th' -> โชว์ภาษาไทย
+// lang === 'en' -> โชว์เฉพาะภาษาอังกฤษ
 export function formatNameField(thaiText, lang) {
   if (lang !== 'en') return truncateName(thaiText);
 
@@ -24,7 +24,7 @@ export function formatNameField(thaiText, lang) {
   try {
     englishRaw = thaiText ? romanize(String(thaiText)) : '';
   } catch (err) {
-    // ถ้าแปลงไม่ได้ (เช่น เจอตัวอักษรที่ไลบรารีไม่รู้จัก) ให้ปล่อยว่างไว้
+    // เจอตัวอักษรที่ไลบรารีไม่รู้จักให้ปล่อยว่างไว้
     englishRaw = '';
   }
 
@@ -33,7 +33,7 @@ export function formatNameField(thaiText, lang) {
 
 // ชื่อแพทย์ในข้อมูลจริงมักเก็บ "คำนำหน้า+ชื่อ" รวมกันเป็นสตริงเดียว เช่น พญ.พิมพ์
 // จึงต้องแยกคำนำหน้าออกก่อน ไม่ให้ถูกแปลงเป็นภาษาอังกฤษไปด้วย
-const DOCTOR_PREFIX_PATTERN = /^(พญ|นพ|นางสาว|นาง|นาย|ดร|ผศ|รศ|ศ|น\.ส)\.?\s*/;
+const DOCTOR_PREFIX_PATTERN = /^(ว่าที่\s*)?(พญ|นพ|ทพ|ทพญ|นางสาว|นาง|นาย|ดร|ผศ|รศ|ศ|น\.ส|(?:[ก-ฮ]+\.\s*)+(?:หญิง)?)\.?\s*/;
 
 function splitDoctorPrefix(text) {
   const str = String(text || '');
@@ -43,8 +43,8 @@ function splitDoctorPrefix(text) {
 }
 
 // ชื่อแพทย์
-// lang === 'th' -> โชว์ภาษาไทย (ตัดตามกฎ 17+...)
-// lang === 'en' -> คำนำหน้ายังเป็นภาษาไทย ส่วนชื่อ-นามสกุลแปลงเป็นภาษาอังกฤษ (ตัดกันตามกฎ 17+...)
+// lang === 'th' -> โชว์ภาษาไทย
+// lang === 'en' -> คำนำหน้ายังเป็นภาษาไทย ส่วนชื่อ-นามสกุลแปลงเป็นภาษาอังกฤษ
 export function formatDoctorField(thaiText, lang) {
   if (lang !== 'en') return truncateName(thaiText);
 

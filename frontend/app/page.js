@@ -12,7 +12,7 @@ export default function Page() {
   const [confirm, setConfirm] = useState(false);
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState('กำลังโหลดข้อมูล...');
-  const [lang, setLang] = useState('th'); // 'th' = ภาษาไทยล้วน, 'en' = ไทย + คาราโอเกะ
+  const [lang, setLang] = useState('th');
 
   // ใช้ Map เพื่อเก็บ XN พร้อมสถานะล่าสุด เช่น { "123": { confirm: "N", confirm_read_film: "N" } }
   const loadedXNsMap = useRef(new Map());
@@ -82,7 +82,7 @@ export default function Page() {
       }
 
       const newRows = [];
-      const updatedRowsMap = new Map(); // เอาไว้เก็บข้อมูลเก่าที่มีการอัปเดตสถานะ
+      const updatedRowsMap = new Map(); // เก็บข้อมูลเก่าที่มีการอัปเดตสถานะ
       let newCount = 0;
       let updateCount = 0;
 
@@ -93,11 +93,11 @@ export default function Page() {
         };
 
         if (loadedXNsMap.current.has(row.xn)) {
-          // ถ้าเป็น XN เดิมที่เคยมีแล้ว (แปลว่ามันมีการอัปเดตสถานะมาจาก Backend)
+          // ถ้าเป็น XN เดิมที่เคยมีแล้ว แปลว่ามันมีการอัปเดตสถานะมาจาก backend
           updatedRowsMap.set(row.xn, row);
           updateCount++;
         } else {
-          // ถ้าเป็น XN ใหม่แกะกล่อง
+          // ถ้าเป็น XN ใหม่
           newRows.push(row);
           newCount++;
         }
@@ -121,7 +121,7 @@ export default function Page() {
           if (isManual) {
             return [...nextRows, ...newRows];
           } else {
-            return [...newRows, ...nextRows]; // ออโต้ 10 วิ ดันไว้บนสุด
+            return [...newRows, ...nextRows]; // ออโต้ 10 วิ ไว้บนสุด
           }
         });
       }
@@ -158,7 +158,7 @@ export default function Page() {
     };
   }, []);
 
-  // backend สร้างไฟล์ .wl ด้วยภาษาที่เลือก
+  // สร้างไฟล์ .wl ด้วยภาษาที่เลือก
   useEffect(() => {
     if (isFirstLangRender.current) {
       isFirstLangRender.current = false;

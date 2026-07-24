@@ -7,8 +7,8 @@ const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 // ค่าเริ่มต้น ดึงมาจาก .env เผื่อยังไม่เคยตั้งค่าผ่านหน้าเว็บ
 const DEFAULT_SETTINGS = {
   his: {
-    dbType: process.env.DB_TYPE,
-    host: process.env.PGHOST,
+    dbType: process.env.DB_TYPE, 
+    host: process.env.PGHOST || 'localhost',
     port: process.env.PGPORT,
     database: process.env.PGDATABASE,
     username: process.env.PGUSER,
@@ -16,6 +16,9 @@ const DEFAULT_SETTINGS = {
     encoding: process.env.DB_ENCODING,
   },
   mwl: {
+    usehl7: process.env.USE_hl7 === 'true' || false,
+    hl7Port:process.env.hl7_PORT || '2575',
+    lang: process.env.MWL_LANG === 'en' ? 'en' : 'th',
     aet: process.env.MWL_AET || 'ORTHANC',
     port: process.env.MWL_PORT || '7000',
     mppsPort: process.env.MPPS_PORT || '7001', // พอร์ตแยกสำหรับรับ MPPS (N-CREATE/N-SET) จากเครื่อง Modality
@@ -33,7 +36,7 @@ function loadSettings() {
       };
     }
   } catch (err) {
-    console.warn('[Settings] ---> ไม่สามารถอ่านไฟล์ settings.json ได้ ใช้ค่า default:', err.message);
+    console.warn('[Settings] ---> ไม่สามารถอ่านไฟล์ settings.json ได้ ใช้ค่าเริ่มต้นแทน:', err.message);
   }
   return DEFAULT_SETTINGS;
 }
@@ -45,8 +48,11 @@ function saveSettings(newSettings) {
     mwl: { ...current.mwl, ...(newSettings.mwl || {}) },
   };
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(merged, null, 2), 'utf8');
-  console.log('[Settings] ---> บันทึกการตั้งค่าใหม่เรียบร้อย');
+  console.log('[Settings] ---> บันทึกการตั้งค่าใหม่เรียบร้อยแล้ว');
   return merged;
 }
 
-module.exports = { loadSettings, saveSettings };
+module.exports = { 
+  loadSettings, 
+  saveSettings 
+};

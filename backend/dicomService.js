@@ -6,7 +6,7 @@ const romanizeModule = require('@dehoist/romanize-thai');
 const romanize = typeof romanizeModule === 'function' ? romanizeModule : romanizeModule.default;
 
 // คำนำหน้าของแพทย์/ผู้ป่วยที่ไม่ต้องแปลงเป็นอังกฤษ
-const PREFIX_PATTERN = /^(พญ|นพ|นางสาว|นาง|นาย|ดร|ผศ|รศ|ศ|น\.ส)\.?\s*/;
+const PREFIX_PATTERN = /^(ว่าที่\s*)?(พญ|นพ|ทพ|ทพญ|นางสาว|นาง|นาย|ดร|ผศ|รศ|ศ|น\.ส|(?:[ก-ฮ]+\.\s*)+(?:หญิง)?)\.?\s*/;
 
 // แปลงข้อความไทยเป็นอังกฤษถ้าแปลงไม่ได้ให้คืนค่าเดิม
 function safeRomanize(text) {
@@ -54,24 +54,28 @@ function getOrCreateStudyInstanceUID(accessionNumber) {
   return generateStudyInstanceUID();
 }
 
-// ฟังก์ชันตรวจสอบ hash ของข้อมูลล่าสุดที่สร้างไฟล์ว่าข้อมูลเปลี่ยนไปจากตอนสร้างไฟล์ครั้งล่าสุดหรือไม่ ถ้าไม่เปลี่ยน จะได้ข้ามไป
+// ฟังก์ชันตรวจสอบ hash ของข้อมูลล่าสุดที่สร้างไฟล์ว่าข้อมูลเปลี่ยนไปจากตอนสร้างไฟล์ครั้งล่าสุดหรือไม่ ถ้าไม่เปลี่ยนจะข้าม
 function getPreviousHash(accessionNumber) {
   const entry = worklistState[accessionNumber];
   if (entry && typeof entry === 'object') return entry.hash;
   return entry;
 }
-// ค่าเริ่มต้น (ถ้าไม่ได้ตั้งค่าอื่นไว้ผ่านหน้า Settings) — โฟลเดอร์ worklists ในตัว backend เอง
+// ค่าเริ่มต้น ถ้าไม่ได้ตั้งค่าอื่นไว้ผ่านหน้าเว็บ — โฟลเดอร์ worklists จะอยู่ใน backend
 const DEFAULT_WORKLIST_DIR = path.join(__dirname, 'worklists');
 
-// โฟลเดอร์ worklists ปัจจุบัน (เปลี่ยนได้ที่ runtime ผ่าน setWorklistDir เมื่อผู้ใช้ตั้งค่าใหม่จากหน้าเว็บ
-// เช่น บางโรงพยาบาลต้องการให้โฟลเดอร์นี้อยู่นอก backend เช่นแชร์ไดรฟ์ร่วมกับเครื่อง Orthanc)
+// โฟลเดอร์ worklists เปลี่ยนได้เมื่อผู้ใช้ตั้งค่าใหม่จากหน้าเว็บ
 let WORKLIST_DIR = DEFAULT_WORKLIST_DIR;
 let STATE_FILE = path.join(WORKLIST_DIR, '.worklist-state.json');
 
-// เก็บ state (hash + StudyInstanceUID ของแต่ละ XN) ไว้ใน memory ตลอดอายุของโปรเซส
+// เก็บ state hash + StudyInstanceUID ของแต่ละ XN ไว้ใน memory ตลอดอายุของโปรเซส
 let worklistState = {};
 
-// ตรวจสอบว่ามีโฟลเดอร์อยู่หรือยัง ถ้ายังไม่มีให้สร้างขึ้นมา (โยน error ออกไปถ้าสร้างไม่ได้ เช่น path ผิด/ไม่มีสิทธิ์)
+// ไฟล์ .wl เกิน 7 วัน
+const WORKLIST_RETENTION_DAYS = 7;
+
+// เก็บวันที่ (YYYY-MM-DD) ของครั้งล่าสุดที่รัน cleanup
+let lastWorklistCleanupDateKey = null;
+
 function ensureDirExists(dir) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -88,28 +92,30 @@ function loadStateFromDisk() {
       worklistState = {};
     }
   } catch (err) {
-    console.warn('[DICOM Service] ---> ไม่สามารถอ่าน state file ได้ เริ่มต้นใหม่:', err.message);
+    console.warn('[DICOM Service] ---> ไม่สามารถอ่าน state file ได้:', err.message);
     worklistState = {};
   }
 }
 
-// เตรียมโฟลเดอร์ default ไว้ตั้งแต่ตอนโหลดโมดูล (เผื่อยังไม่มีการเรียก setWorklistDir เลย)
+// เตรียมโฟลเดอร์ default ไว้ตั้งแต่ตอนโหลดโมดูล เผื่อยังไม่มีการเรียก setWorklistDir
 ensureDirExists(WORKLIST_DIR);
 loadStateFromDisk();
 
+ensureWorklistCleanupForToday();
+
 // เปลี่ยนโฟลเดอร์เก็บไฟล์ worklist ตามค่าที่ตั้งไว้จากหน้า Settings
-// - ถ้า dirPath ว่างเปล่า/ไม่ได้ระบุ -> กลับไปใช้ค่า default (backend/worklists)
-// - ถ้าระบุ path มา -> ใช้ path นั้น (รองรับทั้ง path แบบสัมพัทธ์และแบบเต็ม, backslash/forward slash)
-// - โยน error ออกไปถ้าสร้าง/เข้าถึงโฟลเดอร์นั้นไม่ได้ ให้ผู้เรียก (server.js) เป็นคนจัดการแจ้งเตือนผู้ใช้
+// - ถ้าไม่ได้ระบุกลับไปใช้ค่า default backend/worklists
+// - ถ้าระบุมาใช้ path นั้น รองรับทั้ง path แบบสัมพัทธ์และแบบเต็ม backslash/forward slash
+// - โยน error ออกไปถ้าสร้าง/เข้าถึงโฟลเดอร์นั้นไม่ได้ ให้ผู้เรียก server.js เป็นคนจัดการแจ้งเตือนผู้ใช้
 function setWorklistDir(dirPath) {
   const trimmed = (dirPath || '').trim();
   const resolved = trimmed !== '' ? path.resolve(trimmed) : DEFAULT_WORKLIST_DIR;
 
   if (resolved === WORKLIST_DIR) {
-    return WORKLIST_DIR; // ไม่มีอะไรเปลี่ยน ไม่ต้องทำอะไรต่อ
+    return WORKLIST_DIR;
   }
 
-  ensureDirExists(resolved); // ถ้า path ผิด/ไม่มีสิทธิ์เขียน จะโยน error ออกไปตรงนี้
+  ensureDirExists(resolved); // ถ้า path ผิด/ไม่มีสิทธิ์เขียน จะโยน error ออกไป
 
   WORKLIST_DIR = resolved;
   STATE_FILE = path.join(WORKLIST_DIR, '.worklist-state.json');
@@ -182,8 +188,8 @@ function safeDeleteDumpFile(filePath, attempt = 1) {
 }
 
 // สร้างไฟล์ Worklist (.dump และ .wl) สำหรับ Orthanc
-// @param {Object} item - ข้อมูลผู้ป่วย 1 รายการ (แถวข้อมูลจาก DB)
 async function generateWorklistFile(item) {
+  ensureWorklistCleanupForToday(); // เช็คว่าเปลี่ยนวันปฏิทินหรือยัง ถ้าเปลี่ยนแล้วรัน cleanup ไฟล์ .wl ค้างไปด้วย
   return new Promise((resolve, reject) => {
     try {
       const accessionNumber = item.xn || `XN${Date.now()}`;
@@ -205,18 +211,18 @@ async function generateWorklistFile(item) {
       // รหัสรายการ (xray_items_code) ใช้ทั้งใน RequestedProcedureID และ ScheduledProtocolCodeSequence>CodeValue
       const procedureCode = item.xray_items_code || '';
 
-      // StudyInstanceUID ต้องคงที่ตลอดอายุของรายการนี้ (ไม่สุ่มใหม่ทุกครั้งที่อัพเดทไฟล์)
+      // StudyInstanceUID ต้องคงที่ตลอดอายุของรายการนี้ ไม่สุ่มใหม่ทุกครั้งที่อัพเดทไฟล์
       const studyInstanceUID = getOrCreateStudyInstanceUID(accessionNumber);
 
       // ใช้ safeFileName เพื่อระบุชื่อไฟล์ในการตรวจสอบและสร้างไฟล์
       const wlFileNameCheck = `${safeFileName}.wl`;
       const wlFilePathCheck = path.join(WORKLIST_DIR, wlFileNameCheck);
 
-      // เทียบ hash ของข้อมูลกับครั้งล่าสุดที่สร้างไฟล์ ถ้าไม่เปลี่ยนและไฟล์ .wl ยังอยู่ครบ -> ข้าม ไม่ต้องสร้างซ้ำ
+      // เทียบ hash ของข้อมูลกับครั้งล่าสุดที่สร้างไฟล์ ถ้าไม่เปลี่ยนและไฟล์ .wl ยังอยู่ครบไม่ต้องสร้างซ้ำ
       const currentHash = computeItemHash(item);
       const previousHash = getPreviousHash(accessionNumber);
       if (previousHash === currentHash && fs.existsSync(wlFilePathCheck)) {
-        console.log(`[DICOM Service] ---> ข้ามไฟล์ (ไม่มีการเปลี่ยนแปลง): ${wlFilePathCheck}`);
+        console.log(`[DICOM Service] ---> ข้ามไฟล์ เพราะไม่มีการเปลี่ยนแปลง: ${wlFilePathCheck}`);
         return resolve({ success: true, file: wlFilePathCheck, skipped: true });
       }
 
@@ -225,7 +231,7 @@ async function generateWorklistFile(item) {
       const dob = formatDicomDate(item.birthday);
       const sex = item.sex === '1' ? 'M' : item.sex === '2' ? 'F' : 'O';
       
-      // ตัวอย่างข้อมูล DICOM Tags พื้นฐานสำหรับ Modality Worklist (รูปแบบไฟล์ .dump)
+      // ตัวอย่างข้อมูล รูปแบบไฟล์ .dump
       const dumpContent = `
 (0008,0005) CS [ISO_IR 192] # Specific Character Set (บอกว่าเป็น UTF-8)
 (0008,0050) SH [${accessionNumber}] # Accession Number
@@ -279,7 +285,7 @@ async function generateWorklistFile(item) {
           // ลบไฟล์ .dump ทิ้งเมื่อสร้าง .wl สำเร็จ
           safeDeleteDumpFile(dumpFilePath);
 
-          // บันทึก hash + StudyInstanceUID ของข้อมูลชุดนี้ไว้ ครั้งหน้าถ้าข้อมูลไม่เปลี่ยนจะได้ข้ามได้
+          // บันทึก hash + StudyInstanceUID ของข้อมูลชุดนี้ไว้ ครั้งหน้าถ้าข้อมูลไม่เปลี่ยนจะได้ข้าม
           // และใช้ StudyInstanceUID เดิมซ้ำ ไม่สุ่มใหม่ทุกครั้ง
           worklistState[accessionNumber] = { hash: currentHash, studyInstanceUID };
           saveState();
@@ -318,9 +324,65 @@ function deleteWorklistFile(xn) {
   }
 }
 
+// ลบไฟล์ .wl
+function cleanupStaleWorklists() {
+  try {
+    const files = fs.readdirSync(WORKLIST_DIR).filter((f) => f.endsWith('.wl'));
+    const now = Date.now();
+    const maxAgeMs = WORKLIST_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    let deletedCount = 0;
+
+    // เตรียม map: ชื่อไฟล์ (sanitize แล้ว) -> XN เดิม เผื่อต้องล้าง state ทิ้งด้วย
+    const fileNameToXn = {};
+    Object.keys(worklistState).forEach((xn) => {
+      fileNameToXn[`${sanitizeFileName(xn)}.wl`] = xn;
+    });
+
+    let changed = false;
+    files.forEach((file) => {
+      const filePath = path.join(WORKLIST_DIR, file);
+      try {
+        const stats = fs.statSync(filePath);
+        if (now - stats.mtimeMs > maxAgeMs) {
+          if (deletedCount === 0) {
+            console.log(`[DICOM Service] ---> [Cleanup] เริ่มดำเนินการลบไฟล์ worklist อายุเกิน ${WORKLIST_RETENTION_DAYS} วัน`);
+          }
+          fs.unlinkSync(filePath);
+            console.log(`[DICOM Service] ---> ลบไฟล์ worklist อายุเกิน 7 วัน: ${file}`);
+
+          const xn = fileNameToXn[file];
+          if (xn && worklistState[xn] !== undefined) {
+            delete worklistState[xn];
+            changed = true;
+          }
+          deletedCount += 1;
+        }
+      } catch (err) {
+        console.warn(`[DICOM Service] ---> ตรวจสอบ/ลบไฟล์ ${file} ไม่สำเร็จ:`, err.message);
+      }
+    });
+
+    if (changed) saveState();
+      if (deletedCount > 0) {
+        console.log(`[DICOM Service] ---> [Cleanup] ดำเนินการเสร็จสิ้น พบไฟล์ทั้งหมด ${files.length} ไฟล์ ลบไป ${deletedCount} ไฟล์`);
+      }
+  } catch (err) {
+    console.warn('[DICOM Service] ---> รัน cleanup ไฟล์ worklist ค้างไม่สำเร็จ:', err.message);
+  }
+}
+
+function ensureWorklistCleanupForToday() {
+  const todayKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  if (lastWorklistCleanupDateKey === todayKey) return;
+
+  lastWorklistCleanupDateKey = todayKey;
+  cleanupStaleWorklists();
+}
+
 module.exports = {
   generateWorklistFile,
   deleteWorklistFile,
+  cleanupStaleWorklists,
   setWorklistDir,
   getWorklistDir
 };

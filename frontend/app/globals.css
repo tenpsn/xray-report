@@ -32,8 +32,8 @@ h1 {
 input[type="text"], 
 input[type="number"],
 input[type="password"] {
-  font-family: inherit; /* input ไม่สืบทอด font จาก body เองโดย default ต้องประกาศเองเสมอ */
-  font-size: 13px; /* ให้ตรงกับ label/button/th/td ที่ใช้ 13px เหมือนกันทั้งหน้า */
+  font-family: inherit;
+  font-size: 13px;
   padding: 6px 8px; 
   border: 1px solid #ccc; 
   border-radius: 4px; 
@@ -132,7 +132,7 @@ tbody tr:hover {
   color: #2563eb;
   border: none;
   border-radius: 0;
-  padding: 8px 16px; /* ให้เท่ากับ .settings-link ทุกด้าน จะได้สูง/กว้างเท่ากันพอดี */
+  padding: 8px 16px;
   font-size: 13px;
 }
 
@@ -347,12 +347,9 @@ tbody tr:hover {
   justify-content: space-between;
   gap: 8px;
 }
-/* ================================================================
-   Responsive — ปรับ layout ให้ใช้งานได้ตั้งแต่จอมือถือ (~360px)
-   ไปจนถึงจอเดสก์ท็อปกว้างๆ โดยไม่ต้องมี layout แยกสำหรับแต่ละหน้า
-   ================================================================ */
 
-/* จอแท็บเล็ต / เดสก์ท็อปแคบ (เช่นแบ่งจอ 2 ฝั่ง) */
+/* Responsive — ปรับ layout ให้ใช้งานได้ตั้งแต่จอมือถือ (~360px) */
+/* จอแท็บเล็ต / เดสก์ท็อปแคบ*/
 @media (max-width: 900px) {
   body {
     margin: 16px;
@@ -374,7 +371,6 @@ tbody tr:hover {
     font-size: 18px;
   }
 
-  /* หัวข้อ + ปุ่มด้านขวา ไม่พอวางแนวนอนแล้ว ให้ตกลงมาเป็นแนวตั้งแทน */
   .page-header {
     flex-direction: column;
     align-items: stretch;
@@ -386,7 +382,6 @@ tbody tr:hover {
     justify-content: space-between;
   }
 
-  /* ช่องกรองแต่ละอันเรียงเต็มความกว้าง อ่าน/กดง่ายขึ้นบนจอแคบ แทนที่จะบีบเรียงติดกัน */
   .filters {
     flex-direction: column;
     align-items: stretch;
@@ -405,9 +400,6 @@ tbody tr:hover {
     width: 100%;
   }
 
-  /* ตารางข้อมูลมีคอลัมน์เยอะ (17 คอลัมน์) ไม่มีทางบีบให้พอดีจอมือถือได้แบบสวยงาม
-     จึงปล่อยให้เลื่อนซ้าย-ขวาได้ (สืบทอดมาจาก .table-wrap เดิม) แต่ลดขนาดตัวอักษร/padding
-     ลงอีกนิด ให้เห็นข้อมูลได้เยอะขึ้นต่อการเลื่อนหนึ่งครั้ง */
   th, td {
     padding: 6px 8px;
     font-size: 12px;
@@ -432,7 +424,7 @@ tbody tr:hover {
     text-align: center;
   }
 
-  /* หน้าต่างเลือกโฟลเดอร์ ให้เต็มจอแทบทั้งหมดบนมือถือ อ่าน path ยาวๆ ได้ง่ายขึ้น */
+  /* หน้าต่างเลือกโฟลเดอร์ ให้เต็มจอแทบทั้งหมดบนมือถือ*/
   .modal-box {
     width: 100%;
     max-width: 96vw;
@@ -458,7 +450,6 @@ tbody tr:hover {
     margin: 8px;
   }
 
-  /* ลดขนาดทั้งคู่พร้อมกัน (เดิมลดแค่ .lang-toggle อย่างเดียว ทำให้กลับมาไม่เท่ากันอีกทีตรงจอเล็กมาก) */
   .lang-toggle button,
   .settings-link {
     padding: 6px 10px;
